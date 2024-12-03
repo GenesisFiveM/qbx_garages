@@ -244,3 +244,76 @@ lib.callback.register('qbx_garages:server:payDepotPrice', function(source, vehic
         return true
     end
 end)
+
+RegisterNetEvent('qbx_garages:server:Impound', function(data)
+    local src = source
+    if not exports.qbx_vehicles:DoesPlayerVehiclePlateExist(data.props.plate) then
+        exports.qbx_core:DeleteVehicle(NetworkGetEntityFromNetworkId(data.netid))
+        return
+    end
+    local id = MySQL.scalar.await("SELECT id from player_vehicles where plate=? ", { data.props.plate })
+    local vehicle = exports.qbx_vehicles:GetPlayerVehicle(id)
+    local type = getVehicleType(vehicle)
+
+    local state, depotPrice, reason = 2, data.depotPrice, data.reason
+    if vehicle.job_personalowned then
+        state, depotPrice, reason, data.fullimpound = 1, 0, nil, false
+    end
+
+    local garage = (type == VehicleType.CAR and 'impoundlot') or (type == VehicleType.SEA and 'seadepot') or
+        (type == VehicleType.AIR and 'airdepot')
+
+    if data.fullimpound then
+        MySQL.query(
+            "UPDATE player_vehicles SET state = ?, garage = ?, mods = ?, body = ?, engine = ?, fuel = ?, depotprice = ?, impound_data = ? WHERE id = ?",
+            { state, garage, json.encode(data.props), data.body, data.engine, data.fuel, depotPrice, reason, id })
+        exports.qbx_core:DeleteVehicle(NetworkGetEntityFromNetworkId(data.netid))
+        exports.qbx_core:Notify(src, 'Vehicle seized', 'inform')
+    else
+        MySQL.query(
+            'UPDATE player_vehicles SET state = ?, depotprice = ?, mods = ?, body = ?, engine = ?, fuel = ? WHERE id = ?',
+            { state, data.depotPrice, json.encode(data.props), data.body, data.engine, data.fuel, id })
+        exports.qbx_core:DeleteVehicle(NetworkGetEntityFromNetworkId(data.netid))
+        exports.qbx_core:Notify(src, 'Vehicle taken to depot', 'inform')
+    end
+end)
+
+RegisterNetEvent('qbx_garages:server:UnImpound', function(id)
+    local src = source
+    local type = getVehicleType(exports.qbx_vehicles:GetPlayerVehicle(id))
+    local garage = (type == VehicleType.CAR and 'pillboxgarage') or (type == VehicleType.SEA and 'boatgaragepublic') or
+        (type == VehicleType.AIR and 'airdepot')
+
+    MySQL.query('UPDATE player_vehicles SET state = 2, garage = ?, impound_data = null WHERE id = ?',
+        { garage, id })
+    exports.qbx_core:Notify(src, 'Vehicle taken to depot', 'inform')
+end)
+
+local logger = require '@qbx_core.modules.logger'
+RegisterNetEvent('qbx_garages:server:Seize', function(netid, plate)
+    local src = source
+    local player = exports.qbx_core:GetPlayer(src)
+    local citizenid = MySQL.scalar.await('SELECT citizenid from player_vehicles WHERE plate=?', { plate })
+    if citizenid then
+        TriggerEvent('qb-phone:server:sendNewMail', {
+            sender = "Garage",
+            subject = "Vehicle seized",
+            message = " Your vehicle " ..
+                plate .. " has been seized by the authorities."
+        }, citizenid)
+        MySQL.query(
+            'DELETE FROM player_vehicles WHERE plate = ?',
+            { plate })
+        logger.log({
+            source = player.PlayerData.citizenid,
+            event = 'seized ' .. plate,
+            message = 'owner : ' .. citizenid,
+            webhook =
+            "https://discord.com/api/webhooks/1313545066546991144/bU1pTylh_aF0x87zeAkWxQiGmZVoeHoMoRCEEArMMuzxutYT29t2aRRoKQp00Ue_qmj0",
+            color = "red"
+        })
+    end
+
+    exports.qbx_core:DeleteVehicle(NetworkGetEntityFromNetworkId(netid))
+    exports.qbx_core:Notify(src, 'Vehicle seized', 'inform')
+end)

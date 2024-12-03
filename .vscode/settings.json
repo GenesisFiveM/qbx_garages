@@ -8,5 +8,9 @@
         "MySQL",
         "QBX",
         "qbx"
+    ],
+    "Lua.diagnostics.disable": [
+        "missing-fields",
+        "assign-type-mismatch"
     ]
 }
